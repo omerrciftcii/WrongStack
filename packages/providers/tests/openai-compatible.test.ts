@@ -502,7 +502,9 @@ describe('OpenAICompatibleProvider', () => {
     // — i.e. always, in the agent loop — making the setting a silent no-op on
     // every generic OpenAI-compatible provider.
     let captured: Record<string, unknown> | undefined;
-    const spy = vi.fn(async (_url: unknown, init: { body?: string } = {}) => {
+    let capturedUrl: string | undefined;
+    const spy = vi.fn(async (url: unknown, init: { body?: string } = {}) => {
+      capturedUrl = String(url);
       captured = JSON.parse(init.body ?? '{}');
       return {
         ok: true,
@@ -529,6 +531,7 @@ describe('OpenAICompatibleProvider', () => {
       },
       { signal: new AbortController().signal },
     );
+    expect(capturedUrl).toBe('https://gateway.example.com/v1/chat/completions');
     expect(captured?.['reasoning_effort']).toBe('medium');
 
     // The one mapped level (max → xhigh via the generic fill) reaches the wire too.

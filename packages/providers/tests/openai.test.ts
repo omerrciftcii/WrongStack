@@ -69,7 +69,9 @@ describe('OpenAIProvider', () => {
 
   it('includes tool_choice when set to named function', async () => {
     let captured: Record<string, unknown> | undefined;
-    const fetchImpl = vi.fn(async (_url: unknown, init: { body?: string } = {}) => {
+    let capturedUrl: string | undefined;
+    const fetchImpl = vi.fn(async (url: unknown, init: { body?: string } = {}) => {
+      capturedUrl = String(url);
       captured = JSON.parse(init.body ?? '{}');
       return {
         ok: true,
@@ -108,6 +110,7 @@ describe('OpenAIProvider', () => {
       type: 'function',
       function: { name: 'read' },
     });
+    expect(capturedUrl).toBe('https://api.openai.com/v1/chat/completions');
   });
 
   it('caps output via max_completion_tokens, not the deprecated max_tokens (#10)', async () => {
@@ -370,25 +373,26 @@ describe('OpenAIProvider', () => {
     expect(captured?.['reasoning_effort']).toBe('high');
   });
 
-  it('sends reasoning_effort alongside tools (first-party endpoint supports both)', async () => {
+  it('routes first-party tools plus reasoning through Responses', async () => {
     let captured: Record<string, unknown> | undefined;
-    const fetchImpl = vi.fn(async (_url: unknown, init: { body?: string } = {}) => {
+    let capturedUrl: string | undefined;
+    const fetchImpl = vi.fn(async (url: unknown, init: { body?: string } = {}) => {
+      capturedUrl = String(url);
       captured = JSON.parse(init.body ?? '{}');
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          model: 'm',
-          choices: [{ message: { role: 'assistant', content: 'k' }, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 1, completion_tokens: 1 },
-        }),
-        text: async (): Promise<string> => '',
-      };
+      return new Response(
+        [
+          'data: {"type":"response.created","response":{"id":"r1","model":"gpt-5.6-sol"}}',
+          'data: {"type":"response.output_text.delta","delta":"ok"}',
+          'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}',
+          '',
+        ].join('\n\n'),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
     }) as never as typeof fetch;
-    const p = new OpenAIProvider({ apiKey: 'k', fetchImpl });
+    const p = new OpenAIProvider({ id: 'chatemr-api', apiKey: 'k', fetchImpl });
     await p.complete(
       {
-        model: 'o4',
+        model: 'gpt-5.6-sol',
         messages: [{ role: 'user', content: 'hi' }],
         maxTokens: 100,
         reasoning: { effort: 'medium' },
@@ -405,11 +409,21 @@ describe('OpenAIProvider', () => {
       },
       { signal: new AbortController().signal },
     );
-    // The tools suppression was a third-party-gateway workaround misapplied to
-    // the first-party endpoint — it dropped effort from virtually every
-    // agentic request.
-    expect(captured?.['reasoning_effort']).toBe('medium');
+    expect(p.id).toBe('chatemr-api');
+    expect(capturedUrl).toBe('https://api.openai.com/v1/responses');
+    expect(captured).toMatchObject({
+      model: 'gpt-5.6-sol',
+      stream: true,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+      reasoning: { effort: 'medium', summary: 'auto' },
+    });
     expect(Array.isArray(captured?.['tools'])).toBe(true);
+    expect((captured?.['tools'] as Array<Record<string, unknown>> | undefined)?.[0]).toMatchObject({
+      type: 'function',
+      name: 'read',
+    });
+    expect(captured?.['reasoning_effort']).toBeUndefined();
+    expect(captured?.['messages']).toBeUndefined();
   });
 
   it('sends the real wire levels (minimal, xhigh) and learns from a refusal', async () => {

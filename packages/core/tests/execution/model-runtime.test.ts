@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  resolveModelRuntime,
-  resolveReasoningForRequest,
-  resolveCacheForRequest,
-  resolveParametersForRequest,
   mergeModelRuntime,
+  resolveCacheForRequest,
+  resolveModelRuntime,
+  resolveParametersForRequest,
+  resolveReasoningForRequest,
 } from '../../src/execution/model-runtime.js';
 import type { ModelRuntimeConfig } from '../../src/types/config.js';
 import type { Capabilities, ReasoningConfig } from '../../src/types/provider.js';
@@ -55,6 +55,13 @@ describe('resolveModelRuntime', () => {
 
   it('maps mode "off" to enabled:false when disableSupported', () => {
     const settings: ModelRuntimeConfig = { reasoning: { mode: 'off' } };
+    const r = resolveModelRuntime(settings, capsOn);
+    expect(r.reasoning).toEqual({ enabled: false });
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('mode "off" wins over an inherited non-none effort', () => {
+    const settings: ModelRuntimeConfig = { reasoning: { mode: 'off', effort: 'high' } };
     const r = resolveModelRuntime(settings, capsOn);
     expect(r.reasoning).toEqual({ enabled: false });
     expect(r.warnings).toEqual([]);

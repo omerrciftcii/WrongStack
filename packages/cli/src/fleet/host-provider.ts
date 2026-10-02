@@ -1,4 +1,5 @@
 import type { Config, Provider, ReasoningConfig, SubagentConfig } from '@wrongstack/core/types';
+import { configuredProviderIdentities } from '@wrongstack/core/utils';
 import {
   getProxyConfig,
   rewriteBaseUrl,
@@ -51,12 +52,14 @@ export async function buildHostSubagentProvider(
     : makeProviderFromConfig(providerId, { ...cfgWithType, type: factoryType });
   if (deps.modelsRegistry) {
     const resolvedModel = model ?? config.model;
+    const identities = configuredProviderIdentities(config.providers, providerId);
+    const catalogProviderId = identities[identities.length - 1] ?? providerId;
     // Subagents routinely run a different model than the leader (model
     // matrix, role pins). Overlay THIS model's catalog facts — otherwise the
     // provider carries only the wire-family baseline, where `maxOutput` is
     // undefined and every response gets capped at the adapter's last-resort
     // 8192 regardless of what the model actually supports.
-    provider = await withCatalogCapabilities(deps.modelsRegistry, providerId, provider, {
+    provider = await withCatalogCapabilities(deps.modelsRegistry, catalogProviderId, provider, {
       ...cfgWithType,
       model: resolvedModel,
     });
@@ -84,7 +87,11 @@ export async function resolveHostSubagentReasoningConfig(
 ): Promise<ReasoningConfig | undefined> {
   if (!deps.modelsRegistry) return undefined;
   try {
-    return (await deps.modelsRegistry.getModel(providerId, modelId))?.capabilities.reasoningConfig;
+    const config = deps.configStore.get();
+    const identities = configuredProviderIdentities(config.providers, providerId);
+    const catalogProviderId = identities[identities.length - 1] ?? providerId;
+    return (await deps.modelsRegistry.getModel(catalogProviderId, modelId))?.capabilities
+      .reasoningConfig;
   } catch {
     return undefined;
   }

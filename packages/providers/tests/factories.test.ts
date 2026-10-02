@@ -15,6 +15,21 @@ import {
 } from '../src/index.js';
 
 const SAMPLE: ModelsDevPayload = {
+  openai: {
+    id: 'openai',
+    name: 'OpenAI',
+    env: ['OPENAI_API_KEY'],
+    npm: '@ai-sdk/openai',
+    models: {
+      'gpt-5.6-sol': {
+        id: 'gpt-5.6-sol',
+        name: 'GPT-5.6 Sol',
+        reasoning: true,
+        tool_call: true,
+      },
+      'gpt-4o': { id: 'gpt-4o', name: 'GPT-4o', tool_call: true },
+    },
+  },
   anthropic: {
     id: 'anthropic',
     name: 'Anthropic',
@@ -224,6 +239,62 @@ describe('buildProviderFactoriesFromRegistry', () => {
     // Asked for by its own name, it is just that.
     const plain = build('anthropic', { type: 'anthropic', apiKey: 'sk' });
     expect(providerIdentities(plain)).toEqual(['anthropic']);
+  });
+
+  it('keeps an OpenAI alias while routing tools plus reasoning to Responses', async () => {
+    let capturedUrl: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchImpl = vi.fn(async (url: unknown, init: { body?: string } = {}) => {
+      capturedUrl = String(url);
+      capturedBody = JSON.parse(init.body ?? '{}');
+      return new Response(
+        [
+          'data: {"type":"response.created","response":{"id":"r1","model":"gpt-5.6-sol"}}',
+          'data: {"type":"response.output_text.delta","delta":"ok"}',
+          'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}',
+          '',
+        ].join('\n\n'),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const factories = await buildProviderFactoriesFromRegistry({ registry: makeRegistry() });
+      const provider = factories
+        .find((entry) => entry.type === 'openai')!
+        .create({
+          type: 'chatemr-api',
+          apiKey: 'fake-key',
+          model: 'gpt-5.6-sol',
+        });
+
+      await provider.complete(
+        {
+          model: 'gpt-5.6-sol',
+          messages: [{ role: 'user', content: 'inspect' }],
+          tools: [
+            {
+              name: 'read',
+              description: 'Read a file',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
+          reasoning: { enabled: true, effort: 'medium' },
+        } as never,
+        { signal: new AbortController().signal },
+      );
+
+      expect(provider.id).toBe('chatemr-api');
+      expect(providerIdentities(provider)).toEqual(['chatemr-api', 'openai']);
+      expect(capturedUrl).toBe('https://api.openai.com/v1/responses');
+      expect(capturedBody).toMatchObject({
+        model: 'gpt-5.6-sol',
+        stream: true,
+        reasoning: { effort: 'medium', summary: 'auto' },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('builds a catalog router when one provider mixes supported wire SDKs', async () => {

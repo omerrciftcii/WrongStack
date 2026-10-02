@@ -146,7 +146,11 @@ export function resolveReasoningForRequest(
   // mode 'auto' → never send explicit enabled/disabled; provider default wins.
 
   const effort = cfg.effort;
-  if (effort !== undefined) {
+  // An explicit off wins over inherited/scoped effort. Without this guard a
+  // merged `{ mode: 'off', effort: 'high' }` became the contradictory wire
+  // request `{ enabled: false, effort: 'high' }`, allowing adapters to restore
+  // non-none reasoning on internal/fleet requests.
+  if (cfg.mode !== 'off' && effort !== undefined) {
     if (!capKnown) {
       // Capability-unknown: silently omit. The resolver cannot tell whether
       // the model accepts the field, so it drops the value rather than guess.

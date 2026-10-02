@@ -23,6 +23,7 @@ import { capabilitiesForFamily } from './family-capabilities.js';
 import { openAIImagesBody, openAIImagesUrl, parseOpenAIImages } from './image-generation.js';
 import { type BuildBodyContext, resolveMaxOutputTokens } from './model-output-limits.js';
 import { normalizeOpenAIChatUsage, type OpenAIChatUsageWire } from './openai-chat-usage.js';
+import { OpenAIResponsesProvider } from './openai-responses.js';
 import { shouldEmitReasoningEffort } from './openai-shared.js';
 import { applyPromptCacheKey } from './prompt-cache-key.js';
 import {
@@ -70,6 +71,12 @@ export interface OpenAIProviderOptions {
   capabilities?: Partial<Capabilities> | undefined;
   /** Raw stream debugging and hang-detection options. */
   streamOpts?: WireAdapterStreamOptions | undefined;
+  /**
+   * Allow first-party OpenAI requests that combine tools and reasoning to use
+   * the Responses transport. OpenAI-compatible subclasses disable this because
+   * a Chat-compatible endpoint does not necessarily implement /v1/responses.
+   */
+  responsesTransport?: boolean | undefined;
 }
 
 const DEFAULT_BASE = 'https://api.openai.com/v1';
@@ -82,6 +89,7 @@ export class OpenAIProvider extends WireAdapter {
   override readonly capabilities: Capabilities;
 
   protected readonly opts: OpenAIProviderOptions;
+  private responsesProvider?: OpenAIResponsesProvider | undefined;
 
   constructor(opts: OpenAIProviderOptions) {
     super(opts.apiKey, opts.baseUrl ?? DEFAULT_BASE, opts.fetchImpl, opts.streamOpts);
@@ -126,6 +134,16 @@ export class OpenAIProvider extends WireAdapter {
    * lesson is a distinct refusal, so the retries are bounded by the lessons.
    */
   override async *stream(req: Request, opts: { signal: AbortSignal }): AsyncIterable<StreamEvent> {
+    // Some first-party reasoning models reject function tools alongside
+    // reasoning_effort on Chat Completions and explicitly require Responses.
+    // Route by request capabilities rather than by a model-name list so aliases,
+    // catalog-disabled starts, and newly released reasoning models behave alike.
+    // Plain chat requests remain on the long-standing Chat Completions path.
+    if (this.opts.responsesTransport !== false && shouldUseResponsesTransport(req)) {
+      yield* this.getResponsesProvider().stream(req, opts);
+      return;
+    }
+
     for (let attempt = 0; ; attempt++) {
       let emitted = false;
       try {
@@ -179,6 +197,27 @@ export class OpenAIProvider extends WireAdapter {
       this.opts.quirks?.reasoningEchoField,
       this.baseUrl,
     );
+  }
+
+  private getResponsesProvider(): OpenAIResponsesProvider {
+    if (!this.responsesProvider) {
+      const baseUrl = (this.opts.baseUrl ?? DEFAULT_BASE)
+        .replace(/\/+$/, '')
+        .replace(/\/chat\/completions$/i, '');
+      this.responsesProvider = new OpenAIResponsesProvider({
+        id: this.id,
+        apiKey: this.opts.apiKey,
+        baseUrl,
+        ...(this.opts.organization
+          ? { headers: { 'openai-organization': this.opts.organization } }
+          : {}),
+        ...(this.opts.fetchImpl ? { fetchImpl: this.opts.fetchImpl } : {}),
+        capabilities: this.capabilities,
+        ...(this.opts.streamOpts ? { streamOpts: this.opts.streamOpts } : {}),
+      });
+      this.responsesProvider.maxToolsCount = this.maxToolsCount;
+    }
+    return this.responsesProvider;
   }
 
   protected override buildUrl(_req: Request): string {
@@ -285,6 +324,10 @@ export class OpenAIProvider extends WireAdapter {
       return rest;
     });
   }
+}
+
+function shouldUseResponsesTransport(req: Request): boolean {
+  return Boolean(req.tools?.length && req.reasoning !== undefined);
 }
 
 /**

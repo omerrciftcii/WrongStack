@@ -181,7 +181,7 @@ describe('OpenAIResponsesProvider', () => {
     expect(body.tool_choice).toBe('required');
   });
 
-  it('buildBody omits reasoning when reasoning.enabled is false', async () => {
+  it('buildBody maps reasoning.enabled false to none even with a stale effort', async () => {
     const { OpenAIResponsesProvider } = await import('../src/openai-responses.js');
     const p = new OpenAIResponsesProvider({
       id: 't',
@@ -196,7 +196,7 @@ describe('OpenAIResponsesProvider', () => {
       },
       { capabilities: {} },
     );
-    expect(body.reasoning).toBeUndefined();
+    expect(body.reasoning).toEqual({ effort: 'none' });
   });
 
   it('supportedResponsesEffort passes valid efforts through', async () => {

@@ -110,7 +110,11 @@ export class OpenAIResponsesProvider extends WireAdapter {
     if (req.temperature !== undefined) body['temperature'] = req.temperature;
     if (req.topP !== undefined) body['top_p'] = req.topP;
     const effort = supportedResponsesEffort(req.reasoning?.effort);
-    if (req.reasoning?.enabled !== false && effort) {
+    if (req.reasoning?.enabled === false) {
+      // Responses models use the canonical `none` effort to disable reasoning.
+      // Never let a stale/scoped non-none effort override an explicit off.
+      body['reasoning'] = { effort: 'none' };
+    } else if (effort) {
       body['reasoning'] = { effort, summary: 'auto' };
     }
     applyPromptCacheKey(body, req, ctx.capabilities);

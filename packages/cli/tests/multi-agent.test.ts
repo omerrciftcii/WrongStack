@@ -1333,6 +1333,45 @@ describe('MultiAgentHost.makeSubagentFactory', () => {
     await dispose?.();
   });
 
+  it('uses canonical metadata for an alias-backed fleet provider', async () => {
+    const deps = depsWithTools();
+    const liveConfig = {
+      provider: 'chatemr-api',
+      model: 'gpt-5.6-sol',
+      providers: { 'chatemr-api': { type: 'openai', apiKey: 'fake' } },
+      modelRuntime: { reasoning: { mode: 'auto', effort: 'medium' } },
+    } as never as Config;
+    vi.mocked(deps.configStore.get).mockReturnValue(liveConfig);
+    const getModel = vi.fn(async () => ({
+      capabilities: {
+        maxContext: 128_000,
+        reasoningConfig: {
+          default: 'enabled',
+          disableSupported: true,
+          effortSupported: true,
+          effortLevels: ['none', 'low', 'medium', 'high'],
+          preserveThinking: 'optional',
+        },
+      },
+    }));
+    deps.modelsRegistry = {
+      refresh: vi.fn(async () => ({})),
+      getProvider: vi.fn(async () => undefined),
+      getModel,
+    } as never;
+
+    const { agent, dispose } = await new MultiAgentHost(deps).makeSubagentFactory(liveConfig)({
+      ...slotCfg,
+      provider: 'chatemr-api',
+      model: 'gpt-5.6-sol',
+    });
+    const req = await agent.pipelines.request.run({ model: 'gpt-5.6-sol' } as never);
+
+    expect(getModel).toHaveBeenCalledWith('openai', 'gpt-5.6-sol');
+    expect(req.reasoning).toEqual({ effort: 'medium' });
+    await dispose?.();
+  });
+
   // SubagentConfig.allowedCapabilities must reach the subagent's
   // AutoApprovePermissionPolicy via the factory — otherwise widening the
   // allowlist (e.g. /techstack granting fs.write) is silently inert and the

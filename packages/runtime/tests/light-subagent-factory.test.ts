@@ -452,6 +452,25 @@ describe('makeLightSubagentFactory', () => {
     expect(req.reasoning).toEqual({ effort: 'low' });
   });
 
+  it('resolves alias-backed subagent reasoning metadata from the canonical provider', async () => {
+    const deps = makeDeps(true, {
+      provider: 'chatemr-api',
+      model: 'gpt-5.6-sol',
+      providers: { 'chatemr-api': { type: 'openai', apiKey: 'fake' } },
+      modelRuntime: { reasoning: { mode: 'auto', effort: 'medium' } },
+    } as never);
+    const getModel = vi.fn(async () => ({
+      capabilities: { reasoningConfig: reasoningCaps },
+    }));
+    deps.modelsRegistry = { getModel } as never;
+
+    const r = await makeLightSubagentFactory(deps)({ id: 'alias-worker' });
+    const req = await r.agent.pipelines.request.run({ model: 'gpt-5.6-sol' } as never);
+
+    expect(getModel).toHaveBeenCalledWith('openai', 'gpt-5.6-sol');
+    expect(req.reasoning).toEqual({ effort: 'medium' });
+  });
+
   it('diversifies reviewer away from the implementation lane when no reviewer route is pinned', async () => {
     const deps = makeDeps(true, {
       provider: 'anthropic',

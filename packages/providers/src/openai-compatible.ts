@@ -84,6 +84,7 @@ export class OpenAICompatibleProvider extends OpenAIProvider {
       }),
       quirks: opts.quirks,
       streamOpts: opts.streamOpts,
+      responsesTransport: false,
     });
     this.extraHeaders = opts.headers;
     this.urlOverride = opts.urlOverride;

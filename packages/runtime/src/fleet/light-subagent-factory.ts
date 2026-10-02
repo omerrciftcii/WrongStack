@@ -48,6 +48,7 @@ import type {
   TextBlock,
   Tool,
 } from '@wrongstack/core/types';
+import { configuredProviderIdentities } from '@wrongstack/core/utils';
 import {
   getProxyConfig,
   rewriteBaseUrl,
@@ -161,7 +162,12 @@ export function makeLightSubagentFactory(deps: LightSubagentFactoryDeps): AgentF
       effModel = config.model;
       provider = buildProvider(deps.providerRegistry, config, effProvider, effModel);
     }
-    let subReasoningConfig = await resolveReasoningConfig(modelsRegistry, effProvider, effModel);
+    let subReasoningConfig = await resolveReasoningConfig(
+      modelsRegistry,
+      config,
+      effProvider,
+      effModel,
+    );
     const runtimeOverride = subCfg.modelRuntime ?? matrixTarget?.modelRuntime;
 
     const subCwd = subCfg.cwd ?? deps.cwd ?? deps.projectRoot;
@@ -299,7 +305,12 @@ export function makeLightSubagentFactory(deps: LightSubagentFactoryDeps): AgentF
             model ?? effModel,
           ),
         onModelSwitch: async (id, model) => {
-          subReasoningConfig = await resolveReasoningConfig(modelsRegistry, id, model);
+          subReasoningConfig = await resolveReasoningConfig(
+            modelsRegistry,
+            configStore.get(),
+            id,
+            model,
+          );
         },
         events,
         ...(deps.now ? { now: deps.now } : {}),
@@ -392,12 +403,15 @@ function buildProvider(
 
 async function resolveReasoningConfig(
   registry: ModelsRegistry | undefined,
+  config: Config,
   providerId: string,
   modelId: string,
 ): Promise<ReasoningConfig | undefined> {
   if (!registry) return undefined;
   try {
-    return (await registry.getModel(providerId, modelId))?.capabilities.reasoningConfig;
+    const identities = configuredProviderIdentities(config.providers, providerId);
+    const catalogProviderId = identities[identities.length - 1] ?? providerId;
+    return (await registry.getModel(catalogProviderId, modelId))?.capabilities.reasoningConfig;
   } catch {
     return undefined;
   }
